@@ -55,6 +55,31 @@ export type NextAppRoutePath =
   | { readonly kind: "known"; readonly path: string }
   | { readonly kind: "unknown"; readonly reason: string };
 
+/**
+ * Test /(?:^|\/)app\/(?:[\s\S]*\/)?page(?:\.[cm]?[jt]sx?|-[^/?#]+\.js|)(?:[?#].*)?$/u
+ * in linear time; every source literal reaches this test. The first `app/`
+ * segment admits every later page segment, and `.` cannot cross a line
+ * terminator, so a query or fragment after the page filename starts on the
+ * last line. Retrying from each `app/` or `?` instead is quadratic.
+ */
+const isPageShapedPath = (value: string): boolean => {
+  const app = /(?:^|\/)app\//u.exec(value);
+  if (app === null) return false;
+  const tail = value.slice(app.index + app[0].length);
+  const lastLineStart =
+    Math.max(
+      tail.lastIndexOf("\n"),
+      tail.lastIndexOf("\r"),
+      tail.lastIndexOf("\u2028"),
+      tail.lastIndexOf("\u2029"),
+    ) + 1;
+  for (const page of tail.matchAll(
+    /(?:^|\/)page(?:\.[cm]?[jt]sx?|-[^/?#]+\.js|)(?=[?#]|$)/gu,
+  ))
+    if (page.index + page[0].length >= lastLineStart) return true;
+  return false;
+};
+
 /** Classify a page filename without treating missing routing context as absence. */
 export const classifyNextAppRoutePath = (
   raw: string,
@@ -104,11 +129,7 @@ export const classifyNextAppRoutePath = (
     }
   }
   if (relative === undefined) {
-    if (
-      /(?:^|\/)app\/(?:.*\/)?page(?:\.[cm]?[jt]sx?|-[^/?#]+\.js|)(?:[?#].*)?$/u.test(
-        value,
-      )
-    )
+    if (isPageShapedPath(value))
       return {
         kind: "unknown",
         reason:
@@ -137,7 +158,7 @@ export const classifyNextAppRoutePath = (
     }
   }
   const match =
-    /^(?:(.*?)\/)?page(?:-([^/?#]+)\.js|\.(?:[cm]?jsx?|tsx?)|)([?#].*)?$/u.exec(
+    /^(?:([\s\S]*?)\/)?page(?:-([^/?#]+)\.js|\.(?:[cm]?jsx?|tsx?)|)([?#].*)?$/u.exec(
       relative,
     );
   if (
@@ -148,6 +169,11 @@ export const classifyNextAppRoutePath = (
     (match[3] !== undefined && (urlPath || context.kind === "source-path"))
   )
     return;
+  if (/[\u0000-\u001f\u007f]/u.test(relative))
+    return {
+      kind: "unknown",
+      reason: "A Next page filename contains a control character.",
+    };
   const sourceSegments = (match[1] ?? "").split("/");
   // A private folder excludes the whole page, including intercepted ancestors.
   // Keep filesystem segment spelling: only Next's explicit %5F escape is
@@ -178,8 +204,9 @@ export const classifyNextAppRoutePath = (
             : segment,
     );
   }
-  const path = routePath(`/${segments.filter(Boolean).join("/")}`);
-  return path === undefined ? undefined : { kind: "known", path };
+  // These are filename-derived patterns, not navigation URLs. Preserve spaces
+  // and literal delimiters rather than applying URL syntax validation.
+  return { kind: "known", path: `/${segments.filter(Boolean).join("/")}` };
 };
 
 export const nextScriptBasePath = (source: string): string | undefined => {
