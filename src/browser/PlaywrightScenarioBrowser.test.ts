@@ -14,6 +14,7 @@ import {
 } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import type {
   Browser,
@@ -399,7 +400,11 @@ it("does not let a stuck Android launch block later launches", async () => {
     firstLookupAfterWait = nodeOs.tmpdir();
   });
   try {
-    await firstEntered.promise;
+    await awaitAcknowledgement(
+      firstEntered.promise,
+      first,
+      "stuck Android launch",
+    );
     await expect(
       opening(secondRoot, async () => {
         secondLookup = nodeOs.tmpdir();
@@ -407,6 +412,7 @@ it("does not let a stuck Android launch block later launches", async () => {
     ).rejects.toThrow("launch boundary reached");
   } finally {
     releaseFirst.resolve(undefined);
+    await Promise.allSettled([first]);
   }
   await expect(first).rejects.toThrow("launch boundary reached");
   expect(firstLookup).toBe(appendCallerPath(firstRoot, "tmp"));
