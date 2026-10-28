@@ -488,8 +488,66 @@ it("launches Termux Chromium from the binary next to its ICU data", async () => 
       },
     ),
   ).rejects.toThrow("launch boundary reached");
-  expect(executablePath).toBe(chrome);
+  expect(executablePath).toBe(
+    appendCallerPath(dirname(wrapper), "../lib/chromium/chrome"),
+  );
 });
+
+it.skipIf(process.platform === "win32")(
+  "launches Termux Chromium through a symlink parent",
+  async () => {
+    const root = await createTestTempDirectory("rea-termux-chrome-link-");
+    const physicalPrefix = join(root, "termux", "usr");
+    const decoyChrome = join(root, "work", "lib", "chromium", "chrome");
+    await mkdir(join(physicalPrefix, "inner"), { recursive: true });
+    await mkdir(join(physicalPrefix, "bin"), { recursive: true });
+    await mkdir(join(physicalPrefix, "lib", "chromium"), { recursive: true });
+    await mkdir(join(root, "work", "bin"), { recursive: true });
+    await mkdir(join(root, "work", "lib", "chromium"), { recursive: true });
+    await symlink(join(physicalPrefix, "inner"), join(root, "work", "link"));
+    await writeFile(
+      join(physicalPrefix, "bin", "chromium-browser"),
+      "#!/bin/sh\n",
+    );
+    await writeFile(
+      join(physicalPrefix, "lib", "chromium", "chrome"),
+      "#!/bin/sh\n",
+    );
+    await writeFile(join(root, "work", "bin", "chromium-browser"), "decoy\n");
+    await writeFile(decoyChrome, "decoy\n");
+    const wrapper = `${root}/work/link/../bin/chromium-browser`;
+    Object.defineProperty(process, "platform", { value: "android" });
+    let executablePath: string | undefined;
+    await expect(
+      openPlaywrightScenarioBrowser(
+        androidLaunchScenario(wrapper),
+        { PREFIX: `${root}/work/link/..`, TMPDIR: "", TMP: "", TEMP: "" },
+        {
+          launcher: {
+            connectOverCDP: async () => {
+              throw new Error("Unexpected connection");
+            },
+            launchPersistentContext: async (_profile, options) => {
+              executablePath = options?.executablePath;
+              throw new Error("launch boundary reached");
+            },
+          },
+        },
+      ),
+    ).rejects.toThrow("launch boundary reached");
+    const sibling = appendCallerPath(
+      dirname(wrapper),
+      "../lib/chromium/chrome",
+    );
+    expect(join(dirname(wrapper), "..", "lib", "chromium", "chrome")).toBe(
+      decoyChrome,
+    );
+    expect(executablePath).toBe(sibling);
+    expect(await realpath(executablePath!)).toBe(
+      await realpath(join(physicalPrefix, "lib", "chromium", "chrome")),
+    );
+  },
+);
 
 it("keeps a caller-selected Android browser that is not Termux Chromium", async () => {
   const prefix = await createTestTempDirectory("rea-termux-custom-");

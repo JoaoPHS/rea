@@ -10,7 +10,7 @@ import { access, chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, posix, win32 } from "node:path";
 
 import type {
   Browser,
@@ -25,7 +25,10 @@ import type { BrowserScenario } from "../domain/browserScenario.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { isLiteralLoopbackHostname } from "../domain/browserObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
-import { appendCallerPath } from "../filesystem/callerPath.js";
+import {
+  absoluteCallerPath,
+  appendCallerPath,
+} from "../filesystem/callerPath.js";
 import {
   withPlaywrightExecutionBoundary,
   PLAYWRIGHT_CLEANUP_CONFIRMATION_TIMEOUT_MS,
@@ -399,15 +402,22 @@ const TERMUX_CHROMIUM_WRAPPERS = new Set(["chromium", "chromium-browser"]);
 const resolveAndroidChromiumExecutable = async (
   executablePath: string,
 ): Promise<string> => {
-  const resolved = resolve(executablePath);
   if (process.platform !== "android") return executablePath;
-  if (!TERMUX_CHROMIUM_WRAPPERS.has(basename(resolved))) return executablePath;
-  const sibling = join(dirname(resolved), "..", "lib", "chromium", "chrome");
+  const selected = posix.isAbsolute(executablePath)
+    ? absoluteCallerPath(executablePath)
+    : win32.isAbsolute(executablePath)
+      ? win32.resolve(executablePath)
+      : absoluteCallerPath(executablePath);
+  if (!TERMUX_CHROMIUM_WRAPPERS.has(basename(selected))) return executablePath;
+  const parent = posix.isAbsolute(selected)
+    ? posix.dirname(selected)
+    : dirname(selected);
+  const sibling = appendCallerPath(parent, "../lib/chromium/chrome");
   try {
     await access(sibling, fsConstants.F_OK);
     return sibling;
   } catch {
-    return resolved;
+    return selected;
   }
 };
 
